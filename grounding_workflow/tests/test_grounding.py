@@ -9,7 +9,7 @@ from grounding.boxes import parse_bbox
 from grounding.data import load_query_groups
 from grounding.prompts import PromptCache, load_provider, prepare_prompt_results
 from grounding.postprocess import validate_submission
-from grounding.backends.internvl import build_prompt as build_internvl_prompt
+from grounding.backends.internvl import _unwrap_image_features, build_prompt as build_internvl_prompt
 from grounding.runner import _infer_resilient, _units
 from grounding.runner import RunConfig, run
 from grounding.types import PromptRequest
@@ -99,6 +99,12 @@ def test_internvl_grounding_prompt_is_strict():
     assert "0-1000" in prompt
     assert "multiple instances" in prompt
     assert "all matching instances" in prompt
+
+
+def test_internvl_feature_return_can_be_tensor():
+    import torch
+    feature = torch.zeros((1, 4, 8))
+    assert _unwrap_image_features(feature, torch) is feature
 
 
 def test_runner_writes_submission_and_resume_files(tmp_path: Path):

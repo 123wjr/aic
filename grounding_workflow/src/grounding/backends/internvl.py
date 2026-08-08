@@ -42,6 +42,18 @@ def build_prompt(query: str) -> str:
     )
 
 
+def _unwrap_image_features(result: Any, torch_module: Any):
+    """兼容不同 checkpoint 的 get_image_features 返回值。"""
+
+    if hasattr(result, "pooler_output"):
+        return result.pooler_output
+    if torch_module.is_tensor(result):
+        return result
+    if isinstance(result, (tuple, list)) and result and torch_module.is_tensor(result[0]):
+        return result[0]
+    raise TypeError(f"无法识别 get_image_features 返回类型: {type(result).__name__}")
+
+
 class InternVLBackend(GroundingBackend):
     """InternVL3.5-HF 的 Transformers 适配器。"""
 
@@ -98,17 +110,25 @@ class InternVLBackend(GroundingBackend):
         image = self._load_image(path)
         item: dict[str, Any] = {"image": image}
         if self._feature_api:
-            image_inputs = self.processor.image_processor(images=[image], return_tensors="pt")
-            pixel_values = image_inputs["pixel_values"]
-            num_patches = image_inputs.get("num_patches")
-            if num_patches is None:
-                num_patches = [int(pixel_values.shape[0])]
-            item["pixel_values"] = pixel_values
-            item["num_patches"] = [int(value) for value in num_patches]
-            with self.torch.inference_mode():
-                vision = pixel_values.to(self._feature_device or self._embed_device)
-                features = self.model.model.get_image_features(pixel_values=vision, return_dict=True).pooler_output
-            item["features"] = features.detach()
+            try:
+                image_inputs = self.processor.image_processor(images=[image], return_tensors="pt")
+                pixel_values = image_inputs["pixel_values"]
+                num_patches = image_inputs.get("num_patches")
+                if num_patches is None:
+                    num_patches = [int(pixel_values.shape[0])]
+                item["pixel_values"] = pixel_values
+                item["num_patches"] = [int(value) for value in num_patches]
+                with self.torch.inference_mode():
+                    vision = pixel_values.to(self._feature_device or self._embed_device)
+                    result = self.model.model.get_image_features(pixel_values=vision, return_dict=True)
+                features = _unwrap_image_features(result, self.torch)
+                item["features"] = features.detach()
+            except Exception as exc:
+                if self.is_oom(exc):
+                    raise
+                # 某些远程 checkpoint 的特征接口签名不同，回退到官方 processor。
+                self._feature_api = False
+                item.pop("features", None)
         if self._cache_limit:
             self._cache[key] = item
             self._cache.move_to_end(key)
