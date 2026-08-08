@@ -11,7 +11,8 @@ from typing import Any, Callable, Protocol
 
 from .types import ImageGroup, PromptRequest, PromptResult, QueryRecord
 
-DEFAULT_PREFIX = "Locate a single instance that matches the following description: "
+# LocateAnything 官方 runtime 的默认前缀允许一个 query 描述多个实例。
+DEFAULT_PREFIX = "Locate all the instances that matches the following description: "
 
 
 class PromptProvider(Protocol):

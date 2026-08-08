@@ -15,3 +15,5 @@ bash run_server.sh full
 输出 `predictions.json` 只保留查询原字段并新增归一化 `bbox: [x1,y1,x2,y2]`。
 
 LocateAnything 不支持在单个官方 runtime 内自动做模型并行。配置 `GPU_IDS=0,1` 后，脚本会启动两个独立 worker，每个 worker 绑定一张 GPU 并按图像组分片；worker 内遇到 OOM 会自动降低后续 batch size。
+
+InternVL3.5-38B-HF 使用 `--backend internvl`。它默认使用 Transformers 的 `device_map=auto` 让一个进程看到的多张 GPU 共同承载模型，不要给 InternVL 设置 LocateAnything 的多进程分片。backend 会缓存同图的视觉特征，缓存大小由 `INTERNVL_IMAGE_CACHE_SIZE` 控制。

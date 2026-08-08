@@ -15,6 +15,8 @@ ARGS=(--backend "${BACKEND}" --model "${MODEL}" --data_dir "${DATA_DIR}" --query
 [[ -n "${PROMPT_PREFIX:-}" ]] && ARGS+=(--prompt_prefix "${PROMPT_PREFIX}")
 if [[ "${BACKEND}" == "locateanything" ]]; then
   ARGS+=(--attn "${LOCATEANYTHING_ATTN:-sdpa}" --vision_attn "${LOCATEANYTHING_VISION_ATTN:-auto}" --scheduler "${LOCATEANYTHING_SCHEDULER:-eager}" --group_size "${LOCATEANYTHING_GROUP_SIZE:-0}" --feature_cache_size "${LOCATEANYTHING_FEATURE_CACHE_SIZE:-1}" --max_new_tokens "${LOCATEANYTHING_MAX_NEW_TOKENS:-2048}" --save_every "${SAVE_EVERY:-100}")
+elif [[ "${BACKEND}" == "internvl" ]]; then
+  ARGS+=(--internvl_dtype "${INTERNVL_DTYPE:-bfloat16}" --internvl_image_cache_size "${INTERNVL_IMAGE_CACHE_SIZE:-1}" --max_new_tokens "${INTERNVL_MAX_NEW_TOKENS:-128}")
 else
   ARGS+=(--max_new_tokens "${QWEN_MAX_NEW_TOKENS:-128}")
 fi

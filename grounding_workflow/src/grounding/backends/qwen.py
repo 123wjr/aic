@@ -23,10 +23,12 @@ class QwenConfig:
 
 def _prompt(text: str) -> str:
     return (
-        "Locate exactly one target in the image.\n"
+        "Locate the visual target described by the query; it may be one object or multiple objects.\n"
         f"Target: {text.strip()}\n\n"
+        "For a plural, counted, or collective target, return one tight box enclosing all matching instances. "
+        "For a query selecting one instance by relation or attribute, return only that instance.\n"
         'Return only this JSON object: {"bbox_2d": [x1, y1, x2, y2]}\n'
-        "Use integer coordinates on a relative 0-1000 grid."
+        "Use integer coordinates on a relative 0-1000 grid and include no explanation."
     )
 
 

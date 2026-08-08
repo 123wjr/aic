@@ -9,6 +9,7 @@ from grounding.boxes import parse_bbox
 from grounding.data import load_query_groups
 from grounding.prompts import PromptCache, load_provider, prepare_prompt_results
 from grounding.postprocess import validate_submission
+from grounding.backends.internvl import build_prompt as build_internvl_prompt
 from grounding.runner import _infer_resilient, _units
 from grounding.runner import RunConfig, run
 from grounding.types import PromptRequest
@@ -90,6 +91,14 @@ def test_submission_schema_preserves_source_fields():
     assert validate_submission(prediction, queries) == []
     changed = {"q": {**prediction["q"], "query": "changed"}}
     assert validate_submission(changed, queries)
+
+
+def test_internvl_grounding_prompt_is_strict():
+    prompt = build_internvl_prompt("Two white umbrellas above the outdoor dining area")
+    assert "bbox_2d" in prompt
+    assert "0-1000" in prompt
+    assert "multiple instances" in prompt
+    assert "all matching instances" in prompt
 
 
 def test_runner_writes_submission_and_resume_files(tmp_path: Path):

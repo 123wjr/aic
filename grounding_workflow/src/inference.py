@@ -7,7 +7,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from grounding.backends import LocateAnythingBackend, LocateAnythingConfig, QwenBackend, QwenConfig
+from grounding.backends import InternVLBackend, InternVLConfig, LocateAnythingBackend, LocateAnythingConfig, QwenBackend, QwenConfig
 from grounding.prompts import load_provider
 from grounding.runner import RunConfig, run
 
@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="RGB/红外/深度查询目标定位统一工作流")
-    parser.add_argument("--backend", choices=("qwen", "locateanything"), default="qwen")
+    parser.add_argument("--backend", choices=("qwen", "locateanything", "internvl"), default="qwen")
     parser.add_argument("--model", required=True, help="本地模型目录或 HuggingFace ID")
     parser.add_argument("--data_dir", type=Path, required=True)
     parser.add_argument("--query_file", type=Path, default=None)
@@ -41,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_pixels", type=int, default=None)
     parser.add_argument("--attn_implementation", choices=("eager", "sdpa", "flash_attention_2"), default=None)
     parser.add_argument("--gpu_memory_limit", default=None)
+    parser.add_argument("--internvl_dtype", choices=("bfloat16", "float16"), default="bfloat16")
+    parser.add_argument("--internvl_image_cache_size", type=int, default=1)
     # LocateAnything 参数
     parser.add_argument("--attn", choices=("sdpa", "eager", "magi", "la_flash"), default="sdpa")
     parser.add_argument("--vision_attn", default="auto")
@@ -64,8 +66,12 @@ def main() -> int:
         provider.prefix = args.prompt_prefix
     if args.backend == "qwen":
         backend = QwenBackend(QwenConfig(args.model, args.dtype, args.max_new_tokens or 128, args.min_pixels, args.max_pixels, args.attn_implementation, args.gpu_memory_limit))
-    else:
+    elif args.backend == "locateanything":
         backend = LocateAnythingBackend(LocateAnythingConfig(args.model, args.attn, args.vision_attn, args.scheduler, args.group_size, args.max_new_tokens or 2048, args.temperature, args.top_p, args.top_k, args.repetition_penalty, args.feature_cache_size, provider.prefix))
+    else:
+        if args.internvl_image_cache_size < 0:
+            raise SystemExit("--internvl_image_cache_size 不能为负数")
+        backend = InternVLBackend(InternVLConfig(args.model, args.internvl_dtype, args.max_new_tokens or 128, args.internvl_image_cache_size, args.gpu_memory_limit))
     output = args.output.resolve()
     config = RunConfig(args.data_dir.resolve(), args.query_file.resolve() if args.query_file else None, output, (args.partial or output.with_suffix(".partial.json")).resolve(), (args.raw_output or output.with_suffix(".raw.jsonl")).resolve(), (args.prompt_cache or output.with_suffix(".prompts.jsonl")).resolve(), args.image_field, args.limit, args.batch_size, args.save_every, args.resume, args.shard_index, args.shard_count)
     summary = run(config, provider, backend)
