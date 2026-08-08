@@ -14,10 +14,36 @@ ARGS=(--backend "${BACKEND}" --model "${MODEL}" --data_dir "${DATA_DIR}" --query
 [[ -n "${PROMPT_PROVIDER:-}" ]] && ARGS+=(--prompt_provider "${PROMPT_PROVIDER}")
 [[ -n "${PROMPT_PREFIX:-}" ]] && ARGS+=(--prompt_prefix "${PROMPT_PREFIX}")
 if [[ "${BACKEND}" == "locateanything" ]]; then
-  ARGS+=(--attn "${LOCATEANYTHING_ATTN:-sdpa}" --vision_attn "${LOCATEANYTHING_VISION_ATTN:-auto}" --scheduler "${LOCATEANYTHING_SCHEDULER:-eager}" --group_size "${LOCATEANYTHING_GROUP_SIZE:-0}" --max_new_tokens "${LOCATEANYTHING_MAX_NEW_TOKENS:-2048}" --save_every "${SAVE_EVERY:-100}")
+  ARGS+=(--attn "${LOCATEANYTHING_ATTN:-sdpa}" --vision_attn "${LOCATEANYTHING_VISION_ATTN:-auto}" --scheduler "${LOCATEANYTHING_SCHEDULER:-eager}" --group_size "${LOCATEANYTHING_GROUP_SIZE:-0}" --feature_cache_size "${LOCATEANYTHING_FEATURE_CACHE_SIZE:-1}" --max_new_tokens "${LOCATEANYTHING_MAX_NEW_TOKENS:-2048}" --save_every "${SAVE_EVERY:-100}")
 else
   ARGS+=(--max_new_tokens "${QWEN_MAX_NEW_TOKENS:-128}")
 fi
-PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/inference.py" "${ARGS[@]}"
+
+run_one_worker() {
+  local gpu="$1"
+  local index="$2"
+  local count="$3"
+  local worker_output="${OUTPUT}.gpu${index}.json"
+  local worker_args=("${ARGS[@]}" --output "${worker_output}" --raw_output "${OUTPUT}.gpu${index}.raw.jsonl" --partial "${OUTPUT}.gpu${index}.partial.json" --prompt_cache "${OUTPUT}.gpu${index}.prompts.jsonl" --shard_index "${index}" --shard_count "${count}")
+  CUDA_VISIBLE_DEVICES="${gpu}" PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/inference.py" "${worker_args[@]}" >"${worker_output}.log" 2>&1
+}
+
+IFS=',' read -r -a GPU_LIST <<< "${GPU_IDS:-}"
+if [[ "${BACKEND}" == "locateanything" && ${#GPU_LIST[@]} -gt 1 ]]; then
+  WORKER_OUTPUTS=()
+  WORKER_PIDS=()
+  for index in "${!GPU_LIST[@]}"; do
+    worker_output="${OUTPUT}.gpu${index}.json"
+    WORKER_OUTPUTS+=("${worker_output}")
+    run_one_worker "${GPU_LIST[$index]}" "${index}" "${#GPU_LIST[@]}" &
+    WORKER_PIDS+=("$!")
+  done
+  for pid in "${WORKER_PIDS[@]}"; do
+    wait "${pid}"
+  done
+  PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/merge_predictions.py" --queries "${QUERY_FILE}" --output "${OUTPUT}" "${WORKER_OUTPUTS[@]}"
+else
+  PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/inference.py" "${ARGS[@]}" --output "${OUTPUT}"
+fi
 PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/validate_submission.py" --predictions "${OUTPUT}" --queries "${QUERY_FILE}"
 PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/package_submission.py" --predictions "${OUTPUT}" --queries "${QUERY_FILE}" --output "${SUBMISSION_ZIP:-${ROOT}/submission.zip}"

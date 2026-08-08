@@ -30,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--save_every", type=int, default=100)
+    parser.add_argument("--shard_index", type=int, default=0, help="多 GPU worker 下的分片编号")
+    parser.add_argument("--shard_count", type=int, default=1, help="多 GPU worker 总数")
     parser.add_argument("--no_resume", dest="resume", action="store_false")
     parser.set_defaults(resume=True)
     # Qwen 参数
@@ -54,8 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    if args.limit < 0 or args.batch_size <= 0 or args.save_every <= 0:
-        raise SystemExit("limit 不能为负数，batch_size/save_every 必须大于 0")
+    if args.limit < 0 or args.batch_size <= 0 or args.save_every <= 0 or args.shard_count <= 0 or not 0 <= args.shard_index < args.shard_count:
+        raise SystemExit("limit 不能为负数，batch_size/save_every/shard_count 必须有效")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     provider = load_provider(args.prompt_provider)
     if args.prompt_prefix is not None:
@@ -65,7 +67,7 @@ def main() -> int:
     else:
         backend = LocateAnythingBackend(LocateAnythingConfig(args.model, args.attn, args.vision_attn, args.scheduler, args.group_size, args.max_new_tokens or 2048, args.temperature, args.top_p, args.top_k, args.repetition_penalty, args.feature_cache_size, provider.prefix))
     output = args.output.resolve()
-    config = RunConfig(args.data_dir.resolve(), args.query_file.resolve() if args.query_file else None, output, (args.partial or output.with_suffix(".partial.json")).resolve(), (args.raw_output or output.with_suffix(".raw.jsonl")).resolve(), (args.prompt_cache or output.with_suffix(".prompts.jsonl")).resolve(), args.image_field, args.limit, args.batch_size, args.save_every, args.resume)
+    config = RunConfig(args.data_dir.resolve(), args.query_file.resolve() if args.query_file else None, output, (args.partial or output.with_suffix(".partial.json")).resolve(), (args.raw_output or output.with_suffix(".raw.jsonl")).resolve(), (args.prompt_cache or output.with_suffix(".prompts.jsonl")).resolve(), args.image_field, args.limit, args.batch_size, args.save_every, args.resume, args.shard_index, args.shard_count)
     summary = run(config, provider, backend)
     logging.info("完成: %s", summary)
     return 0

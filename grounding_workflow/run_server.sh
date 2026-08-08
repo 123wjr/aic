@@ -14,6 +14,7 @@ cd "${ROOT}"
 : "${BATCH_SIZE:?server.env 缺少 BATCH_SIZE}"
 export MODEL_BACKEND PROMPT_PROVIDER PROMPT_PREFIX
 export LOCATEANYTHING_ATTN LOCATEANYTHING_VISION_ATTN LOCATEANYTHING_SCHEDULER LOCATEANYTHING_GROUP_SIZE LOCATEANYTHING_MAX_NEW_TOKENS
+export GPU_IDS
 RUN_DIR="${OUTPUT_ROOT}/${RUN_NAME}"
 QUERY_FILE="${DATA_DIR}/queries/queries.json"
 
@@ -21,6 +22,10 @@ case "${1:-help}" in
   check)
     [[ -f "${QUERY_FILE}" ]] || { echo "找不到查询文件: ${QUERY_FILE}"; exit 1; }
     PYTHONPATH="${ROOT}/src" python3 -m compileall -q "${ROOT}/src"
+    if [[ "${MODEL_BACKEND}" == "locateanything" ]]; then
+      python3 -c "import cv2, decord, lmdb"
+      python3 -c "import transformers, sys; major=int(transformers.__version__.split('.')[0]); assert major < 5, f'LocateAnything 需要 Transformers 4.x，当前为 {transformers.__version__}'"
+    fi
     echo "配置、查询文件和 Python 模块检查通过" ;;
   smoke)
     mkdir -p "${OUTPUT_ROOT}/smoke/${MODEL_BACKEND}"

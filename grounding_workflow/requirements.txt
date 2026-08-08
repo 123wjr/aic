@@ -1,6 +1,9 @@
 torch
-transformers>=4.57
+transformers>=4.57,<5.0
 accelerate
 qwen-vl-utils
 Pillow
 huggingface_hub
+opencv-python-headless
+decord
+lmdb
