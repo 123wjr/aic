@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from grounding.ordinal_workflow import (
+    build_plan_prompt,
     build_selector_prompt,
     choose_candidate_from_text,
+    parse_ordinal_plan,
     parse_candidate_boxes,
     plan_ordinal_query,
 )
@@ -42,3 +44,21 @@ def test_selector_prompt_contains_original_query_and_candidates():
     assert "From left to right, the second stone pier" in prompt
     assert "candidate" in prompt
     assert "[100, 200, 300, 400]" in prompt
+
+
+def test_parse_ordinal_plan_from_qwen_json():
+    plan = parse_ordinal_plan(
+        '{"target":"stone pier","order":"left_to_right","rank":1,"confidence":0.98,"is_simple_ordinal":true}'
+    )
+    assert plan.target == "stone pier"
+    assert plan.order == "left_to_right"
+    assert plan.rank == 1
+    assert plan.confidence == 0.98
+    assert plan.is_simple_ordinal is True
+
+
+def test_plan_prompt_requires_structured_query_analysis():
+    prompt = build_plan_prompt("The pier behind the fourth pier from the left")
+    assert "target" in prompt
+    assert "is_simple_ordinal" in prompt
+    assert "Do not treat an ordinal inside a reference phrase as the main order" in prompt

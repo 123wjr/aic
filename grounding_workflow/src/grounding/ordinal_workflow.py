@@ -36,6 +36,50 @@ class OrdinalPlan:
     target: str
     order: str
     rank: int
+    confidence: float = 0.0
+    is_simple_ordinal: bool = True
+
+
+def build_plan_prompt(query: str) -> str:
+    return (
+        "Analyze this visual grounding query and return only JSON.\n"
+        f"Query: {query.strip()}\n"
+        "Extract the target phrase without losing relational descriptions.\n"
+        "Use order values: left_to_right, right_to_left, near_to_far, far_to_near, none.\n"
+        "rank is zero-based for first/second/third or -1 for last.\n"
+        "Do not treat an ordinal inside a reference phrase as the main order.\n"
+        "Set is_simple_ordinal=true only when the query directly asks for one ordered "
+        "instance of a repeated target; otherwise set it to false.\n"
+        'Return exactly: {"target":"...", "order":"...", "rank":0, '
+        '"confidence":0.0, "is_simple_ordinal":true}'
+    )
+
+
+def parse_ordinal_plan(text: str) -> OrdinalPlan:
+    for value in _json_values(text):
+        if not isinstance(value, dict):
+            continue
+        target = value.get("target")
+        order = value.get("order")
+        rank = value.get("rank")
+        confidence = value.get("confidence", 0.0)
+        simple = value.get("is_simple_ordinal")
+        if (
+            isinstance(target, str)
+            and target.strip()
+            and order in {"left_to_right", "right_to_left", "near_to_far", "far_to_near", "none"}
+            and isinstance(rank, int)
+            and isinstance(confidence, (int, float))
+            and isinstance(simple, bool)
+        ):
+            return OrdinalPlan(
+                target.strip(),
+                order,
+                rank,
+                max(0.0, min(1.0, float(confidence))),
+                simple,
+            )
+    raise ValueError("Qwen ordinal plan JSON 无效")
 
 
 def plan_ordinal_query(query: str) -> OrdinalPlan:
@@ -69,7 +113,13 @@ def plan_ordinal_query(query: str) -> OrdinalPlan:
     )
     target = re.sub(r"\b(?:the|a|an)\b", " ", target, flags=re.IGNORECASE)
     target = re.sub(r"\s+", " ", target).strip(" ,.")
-    return OrdinalPlan(target or text, order, rank)
+    return OrdinalPlan(
+        target or text,
+        order,
+        rank,
+        confidence=0.0,
+        is_simple_ordinal=not bool(re.search(r"\b(?:behind|beside|in front of|located|right of|left of)\b", lower)),
+    )
 
 
 def parse_candidate_boxes(text: str) -> list[list[float]]:
@@ -98,7 +148,7 @@ def build_selector_prompt(query: str, candidates: list[list[float]]) -> str:
 
 def choose_candidate_from_text(text: str, candidates: list[list[float]]) -> list[float] | None:
     if not candidates:
-        return None
+        return parse_bbox(text or "")
     for value in _json_values(text):
         if isinstance(value, dict):
             candidate = value.get("candidate")

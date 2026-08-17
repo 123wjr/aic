@@ -13,7 +13,9 @@ from grounding.checkpoint import DEFAULT_BOX, append_jsonl, atomic_dump
 from grounding.data import load_query_groups
 from grounding.ordinal_workflow import (
     build_selector_prompt,
+    build_plan_prompt,
     choose_candidate_from_text,
+    parse_ordinal_plan,
     parse_candidate_boxes,
     pick_by_plan,
     plan_ordinal_query,
@@ -74,14 +76,35 @@ def main() -> int:
     results = {}
     for index, record in enumerate(records, 1):
         started = time.time()
-        plan = plan_ordinal_query(record.query)
-        la_prompt = build_prompt(plan.target, "locateanything_multi")
-        la_text = la.infer([InferenceUnit(record.image_key, record.image_path, (record,), (la_prompt,))]).texts[0]
-        candidates = parse_candidate_boxes(la_text)
-        qwen_prompt = build_selector_prompt(record.query, candidates) if candidates else build_prompt(record.query, "qwen_json")
-        qwen_text = qwen.infer([InferenceUnit(record.image_key, record.image_path, (record,), (qwen_prompt,))]).texts[0]
-        selected = choose_candidate_from_text(qwen_text, candidates) or pick_by_plan(plan, candidates) or DEFAULT_BOX.copy()
-        selected_source = "qwen_select" if choose_candidate_from_text(qwen_text, candidates) else "plan_fallback" if candidates else "default_box"
+        plan_prompt = build_plan_prompt(record.query)
+        plan_text = qwen.infer([InferenceUnit(record.image_key, record.image_path, (record,), (plan_prompt,))]).texts[0]
+        try:
+            plan = parse_ordinal_plan(plan_text)
+            plan_source = "qwen_plan"
+        except ValueError:
+            plan = plan_ordinal_query(record.query)
+            plan_source = "regex_fallback"
+
+        la_prompt = ""
+        la_text = ""
+        candidates = []
+        qwen_prompt = ""
+        qwen_text = ""
+        selected_source = "default_box"
+        if plan.is_simple_ordinal and plan.order != "none" and plan.confidence >= 0.5:
+            la_prompt = build_prompt(plan.target, "locateanything_multi")
+            la_text = la.infer([InferenceUnit(record.image_key, record.image_path, (record,), (la_prompt,))]).texts[0]
+            candidates = parse_candidate_boxes(la_text)
+            qwen_prompt = build_selector_prompt(record.query, candidates) if candidates else build_prompt(record.query, "qwen_json")
+            qwen_text = qwen.infer([InferenceUnit(record.image_key, record.image_path, (record,), (qwen_prompt,))]).texts[0]
+            selected_by_qwen = choose_candidate_from_text(qwen_text, candidates)
+            selected = selected_by_qwen or pick_by_plan(plan, candidates) or DEFAULT_BOX.copy()
+            selected_source = "qwen_select" if selected_by_qwen else "plan_fallback" if candidates else "default_box"
+        else:
+            qwen_prompt = build_prompt(record.query, "qwen_json")
+            qwen_text = qwen.infer([InferenceUnit(record.image_key, record.image_path, (record,), (qwen_prompt,))]).texts[0]
+            selected = choose_candidate_from_text(qwen_text, []) or DEFAULT_BOX.copy()
+            selected_source = "qwen_direct" if selected != DEFAULT_BOX else "default_box"
         results[record.query_id] = {**record.source, "bbox": selected}
         append_jsonl(
             raw,
@@ -90,6 +113,9 @@ def main() -> int:
                 "image_key": record.image_key,
                 "query": record.query,
                 "plan": plan.__dict__,
+                "plan_prompt": plan_prompt,
+                "plan_raw_output": plan_text,
+                "plan_source": plan_source,
                 "la_prompt": la_prompt,
                 "la_raw_output": la_text,
                 "candidates": candidates,
