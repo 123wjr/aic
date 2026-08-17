@@ -169,3 +169,32 @@ flowchart TD
 ```
 
 最小重构方向：先把 `server.env + run_inference.sh 参数拼接` 合并成一个 `experiment.yaml` 或 JSON 配置加载器；`runner.py` 暂时别动，它已经相对干净。
+
+## Ordinal Workflow
+
+针对“从左到右第二个”“最右侧”等序号 query，使用独立两阶段入口：
+
+```mermaid
+flowchart TD
+    A[ordinal query] --> B[plan_ordinal_query]
+    B --> C[去除序号词，得到基础目标]
+    C --> D[LocateAnything ground_multi]
+    D --> E[解析多个候选框]
+    E --> F[Qwen 读取原 query + 候选框]
+    F --> G[选择具体候选]
+    G --> H[输出单 bbox]
+```
+
+运行入口：
+
+```bash
+PYTHONPATH=src python3 src/run_ordinal_workflow.py \
+  --qwen_model "$QWEN_MODEL" \
+  --locateanything_model "$LA_MODEL" \
+  --data_dir ../dataset \
+  --query_file /tmp/count_smoke_queries.json \
+  --output ../outputs/ordinal_smoke.json \
+  --limit 20
+```
+
+该入口只处理 `ordinal` query；默认单模型 `inference.py` 流程不变。
