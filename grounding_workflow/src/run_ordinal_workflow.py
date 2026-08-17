@@ -91,20 +91,16 @@ def main() -> int:
         qwen_prompt = ""
         qwen_text = ""
         selected_source = "default_box"
-        if plan.is_simple_ordinal and plan.order != "none" and plan.confidence >= 0.5:
-            la_prompt = build_prompt(plan.target, "locateanything_multi")
-            la_text = la.infer([InferenceUnit(record.image_key, record.image_path, (record,), (la_prompt,))]).texts[0]
-            candidates = parse_candidate_boxes(la_text)
-            qwen_prompt = build_selector_prompt(record.query, candidates) if candidates else build_prompt(record.query, "qwen_json")
-            qwen_text = qwen.infer([InferenceUnit(record.image_key, record.image_path, (record,), (qwen_prompt,))]).texts[0]
-            selected_by_qwen = choose_candidate_from_text(qwen_text, candidates)
-            selected = selected_by_qwen or pick_by_plan(plan, candidates) or DEFAULT_BOX.copy()
-            selected_source = "qwen_select" if selected_by_qwen else "plan_fallback" if candidates else "default_box"
-        else:
-            qwen_prompt = build_prompt(record.query, "qwen_json")
-            qwen_text = qwen.infer([InferenceUnit(record.image_key, record.image_path, (record,), (qwen_prompt,))]).texts[0]
-            selected = choose_candidate_from_text(qwen_text, []) or DEFAULT_BOX.copy()
-            selected_source = "qwen_direct" if selected != DEFAULT_BOX else "default_box"
+        # LA remains the candidate generator even for complex ordinal relations.
+        # Qwen's plan preserves the relation; Qwen then selects among LA candidates.
+        la_prompt = build_prompt(plan.target, "locateanything_multi")
+        la_text = la.infer([InferenceUnit(record.image_key, record.image_path, (record,), (la_prompt,))]).texts[0]
+        candidates = parse_candidate_boxes(la_text)
+        qwen_prompt = build_selector_prompt(record.query, candidates) if candidates else build_prompt(record.query, "qwen_json")
+        qwen_text = qwen.infer([InferenceUnit(record.image_key, record.image_path, (record,), (qwen_prompt,))]).texts[0]
+        selected_by_qwen = choose_candidate_from_text(qwen_text, candidates)
+        selected = selected_by_qwen or pick_by_plan(plan, candidates) or choose_candidate_from_text(qwen_text, []) or DEFAULT_BOX.copy()
+        selected_source = "qwen_select" if selected_by_qwen else "plan_fallback" if candidates else "qwen_direct" if selected != DEFAULT_BOX else "default_box"
         results[record.query_id] = {**record.source, "bbox": selected}
         append_jsonl(
             raw,
