@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..prompts import DEFAULT_PREFIX
 from ..types import BackendResponse, GroundingBackend, InferenceUnit
 
 
@@ -28,7 +27,6 @@ class LocateAnythingConfig:
     top_k: int | None = None
     repetition_penalty: float = 1.1
     feature_cache_size: int = 1
-    prompt_prefix: str = DEFAULT_PREFIX
 
 
 class LocateAnythingBackend(GroundingBackend):
@@ -36,15 +34,17 @@ class LocateAnythingBackend(GroundingBackend):
 
     def __init__(self, config: LocateAnythingConfig):
         self.config = config
-        os.environ.update({
-            "LA_FLASH_MODEL": config.model,
-            "LA_FLASH_ATTN": config.attn,
-            "LA_FLASH_VISION_ATTN": config.vision_attn,
-            "LA_FLASH_HYBRID_SCHEDULER": config.scheduler,
-            "LA_FLASH_HYBRID_GROUP_SIZE": str(config.group_size),
-            "LA_FLASH_HYBRID_PREFILL": "shared",
-            "LA_FLASH_CACHE_TOKENIZE": "1",
-        })
+        os.environ.update(
+            {
+                "LA_FLASH_MODEL": config.model,
+                "LA_FLASH_ATTN": config.attn,
+                "LA_FLASH_VISION_ATTN": config.vision_attn,
+                "LA_FLASH_HYBRID_SCHEDULER": config.scheduler,
+                "LA_FLASH_HYBRID_GROUP_SIZE": str(config.group_size),
+                "LA_FLASH_HYBRID_PREFILL": "shared",
+                "LA_FLASH_CACHE_TOKENIZE": "1",
+            }
+        )
         model_dir = self._resolve_model_dir(config.model)
         if str(model_dir) not in sys.path:
             sys.path.insert(0, str(model_dir))
@@ -55,7 +55,7 @@ class LocateAnythingBackend(GroundingBackend):
         self._load = batch_utils.load
         self._encode_images = runtime._encode_images
         self._load_pil = runtime.load_pil
-        runtime._PROMPT = config.prompt_prefix
+        runtime._PROMPT = ""
         self._features: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._cache_limit = max(0, config.feature_cache_size)
         self._load()
@@ -97,8 +97,20 @@ class LocateAnythingBackend(GroundingBackend):
         cache = self._batch_features(units)
         pairs = [(cache[u.image_key][0], list(u.prompts)) for u in units]
         features = [cache[u.image_key][1] for u in units]
-        outputs = self._generate(pairs, temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k, repetition_penalty=self.config.repetition_penalty, max_new_tokens=self.config.max_new_tokens, scheduler=self.config.scheduler, group_size=self.config.group_size, vision_features=features)
-        return BackendResponse(tuple(text for group in outputs for text in group), self._stats())
+        outputs = self._generate(
+            pairs,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            top_k=self.config.top_k,
+            repetition_penalty=self.config.repetition_penalty,
+            max_new_tokens=self.config.max_new_tokens,
+            scheduler=self.config.scheduler,
+            group_size=self.config.group_size,
+            vision_features=features,
+        )
+        return BackendResponse(
+            tuple(text for group in outputs for text in group), self._stats()
+        )
 
     @staticmethod
     def is_oom(error: BaseException) -> bool:
@@ -109,6 +121,7 @@ class LocateAnythingBackend(GroundingBackend):
         gc.collect()
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()

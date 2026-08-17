@@ -9,10 +9,18 @@ BACKEND="${4:-${MODEL_BACKEND:-qwen}}"
 QUERY_FILE="${DATA_DIR}/queries/queries.json"
 
 ARGS=(--backend "${BACKEND}" --model "${MODEL}" --data_dir "${DATA_DIR}" --query_file "${QUERY_FILE}" --output "${OUTPUT}" --batch_size "${BATCH_SIZE:-4}")
+PROMPT_PROFILE_VALUE="${PROMPT_PROFILE:-}"
+if [[ -z "${PROMPT_PROFILE_VALUE}" ]]; then
+  case "${BACKEND}" in
+    qwen) PROMPT_PROFILE_VALUE="qwen_json" ;;
+    locateanything) PROMPT_PROFILE_VALUE="locateanything" ;;
+    internvl) PROMPT_PROFILE_VALUE="internvl_json_union" ;;
+  esac
+fi
+ARGS+=(--prompt_profile "${PROMPT_PROFILE_VALUE}")
 [[ -n "${LIMIT:-}" ]] && ARGS+=(--limit "${LIMIT}")
 [[ "${NO_RESUME:-0}" == "1" ]] && ARGS+=(--no_resume)
 [[ -n "${PROMPT_PROVIDER:-}" ]] && ARGS+=(--prompt_provider "${PROMPT_PROVIDER}")
-[[ -n "${PROMPT_PREFIX:-}" ]] && ARGS+=(--prompt_prefix "${PROMPT_PREFIX}")
 if [[ "${BACKEND}" == "locateanything" ]]; then
   ARGS+=(--attn "${LOCATEANYTHING_ATTN:-sdpa}" --vision_attn "${LOCATEANYTHING_VISION_ATTN:-auto}" --scheduler "${LOCATEANYTHING_SCHEDULER:-eager}" --group_size "${LOCATEANYTHING_GROUP_SIZE:-0}" --feature_cache_size "${LOCATEANYTHING_FEATURE_CACHE_SIZE:-1}" --max_new_tokens "${LOCATEANYTHING_MAX_NEW_TOKENS:-2048}" --save_every "${SAVE_EVERY:-100}")
 elif [[ "${BACKEND}" == "internvl" ]]; then
@@ -26,8 +34,8 @@ run_one_worker() {
   local index="$2"
   local count="$3"
   local worker_output="${OUTPUT}.gpu${index}.json"
-  local worker_args=("${ARGS[@]}" --output "${worker_output}" --raw_output "${OUTPUT}.gpu${index}.raw.jsonl" --partial "${OUTPUT}.gpu${index}.partial.json" --prompt_cache "${OUTPUT}.gpu${index}.prompts.jsonl" --shard_index "${index}" --shard_count "${count}")
-  CUDA_VISIBLE_DEVICES="${gpu}" PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/inference.py" "${worker_args[@]}" >"${worker_output}.log" 2>&1
+  local worker_args=("${ARGS[@]}" --output "${worker_output}" --raw_output "${OUTPUT}.gpu${index}.raw.jsonl" --partial "${OUTPUT}.gpu${index}.partial.json" --prompt_cache "${OUTPUT}.gpu${index}.prompts.jsonl" --log_file "${worker_output}.log" --shard_index "${index}" --shard_count "${count}")
+  CUDA_VISIBLE_DEVICES="${gpu}" PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${ROOT}/src/inference.py" "${worker_args[@]}"
 }
 
 IFS=',' read -r -a GPU_LIST <<< "${GPU_IDS:-}"

@@ -21,17 +21,6 @@ class QwenConfig:
     gpu_memory_limit: str | None = None
 
 
-def _prompt(text: str) -> str:
-    return (
-        "Locate the visual target described by the query; it may be one object or multiple objects.\n"
-        f"Target: {text.strip()}\n\n"
-        "For a plural, counted, or collective target, return one tight box enclosing all matching instances. "
-        "For a query selecting one instance by relation or attribute, return only that instance.\n"
-        'Return only this JSON object: {"bbox_2d": [x1, y1, x2, y2]}\n'
-        "Use integer coordinates on a relative 0-1000 grid and include no explanation."
-    )
-
-
 class QwenBackend(GroundingBackend):
     """官方 Qwen Transformers 接口适配器。"""
 
@@ -71,7 +60,7 @@ class QwenBackend(GroundingBackend):
                     image_content["min_pixels"] = self.config.min_pixels
                 if self.config.max_pixels is not None:
                     image_content["max_pixels"] = self.config.max_pixels
-                conversations.append([{"role": "user", "content": [image_content, {"type": "text", "text": _prompt(prompt)}]}])
+                conversations.append([{"role": "user", "content": [image_content, {"type": "text", "text": prompt}]}])
         inputs = self.processor.apply_chat_template(conversations, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt", padding=True).to(self.model.device)
         with self.torch.inference_mode():
             generated = self.model.generate(**inputs, max_new_tokens=self.config.max_new_tokens, do_sample=False)

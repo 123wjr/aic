@@ -12,8 +12,9 @@ cd "${ROOT}"
 : "${OUTPUT_ROOT:?server.env 缺少 OUTPUT_ROOT}"
 : "${RUN_NAME:?server.env 缺少 RUN_NAME}"
 : "${BATCH_SIZE:?server.env 缺少 BATCH_SIZE}"
-export MODEL_BACKEND PROMPT_PROVIDER PROMPT_PREFIX
+export MODEL_BACKEND PROMPT_PROVIDER PROMPT_PROFILE
 export LOCATEANYTHING_ATTN LOCATEANYTHING_VISION_ATTN LOCATEANYTHING_SCHEDULER LOCATEANYTHING_GROUP_SIZE LOCATEANYTHING_MAX_NEW_TOKENS
+export LOCATEANYTHING_FEATURE_CACHE_SIZE INTERNVL_DTYPE INTERNVL_IMAGE_CACHE_SIZE INTERNVL_MAX_NEW_TOKENS
 export GPU_IDS
 RUN_DIR="${OUTPUT_ROOT}/${RUN_NAME}"
 QUERY_FILE="${DATA_DIR}/queries/queries.json"
@@ -28,8 +29,17 @@ case "${1:-help}" in
     fi
     echo "配置、查询文件和 Python 模块检查通过" ;;
   smoke)
-    mkdir -p "${OUTPUT_ROOT}/smoke/${MODEL_BACKEND}"
-    BATCH_SIZE="${BATCH_SIZE}" LIMIT="${SMOKE_LIMIT}" NO_RESUME=1 bash "${ROOT}/run_inference.sh" "${MODEL}" "${DATA_DIR}" "${OUTPUT_ROOT}/smoke/${MODEL_BACKEND}/predictions.json" "${MODEL_BACKEND}" ;;
+    SMOKE_PROFILE="${PROMPT_PROFILE:-}"
+    if [[ -z "${SMOKE_PROFILE}" ]]; then
+      case "${MODEL_BACKEND}" in
+        qwen) SMOKE_PROFILE="qwen_json" ;;
+        locateanything) SMOKE_PROFILE="locateanything" ;;
+        internvl) SMOKE_PROFILE="internvl_json_union" ;;
+      esac
+    fi
+    SMOKE_NAME="${MODEL_BACKEND}-${SMOKE_PROFILE}"
+    mkdir -p "${OUTPUT_ROOT}/smoke/${SMOKE_NAME}"
+    BATCH_SIZE="${BATCH_SIZE}" LIMIT="${SMOKE_LIMIT}" NO_RESUME=1 bash "${ROOT}/run_inference.sh" "${MODEL}" "${DATA_DIR}" "${OUTPUT_ROOT}/smoke/${SMOKE_NAME}/predictions.json" "${MODEL_BACKEND}" ;;
   full|resume)
     mkdir -p "${RUN_DIR}"
     BATCH_SIZE="${BATCH_SIZE}" SUBMISSION_ZIP="${RUN_DIR}/submission.zip" bash "${ROOT}/run_inference.sh" "${MODEL}" "${DATA_DIR}" "${RUN_DIR}/predictions.json" "${MODEL_BACKEND}" ;;

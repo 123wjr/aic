@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import gc
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..types import BackendResponse, GroundingBackend, InferenceUnit
+
+
+LOG = logging.getLogger("grounding.internvl")
 
 
 @dataclass(frozen=True)
@@ -20,26 +24,6 @@ class InternVLConfig:
     max_new_tokens: int = 128
     image_cache_size: int = 1
     gpu_memory_limit: str | None = None
-
-
-def build_prompt(query: str) -> str:
-    """InternVL3.5 grounding 提示词。
-
-    坐标使用模型常见的 0-1000 图像坐标系，公共 parser 会再归一化到 0-1。
-    """
-
-    return (
-        "Locate the visual target described by the query. The target may be one object or a group of objects.\n"
-        f"Target description: {query.strip()}\n\n"
-        "If the query describes multiple instances, a count, or a collective target, "
-        "include all matching instances in one tight enclosing bounding box. "
-        "If the query identifies one instance by a relation or attribute, box only that instance.\n"
-        "Return exactly one bounding box. Preferred format: "
-        '{"bbox_2d": [x1, y1, x2, y2]}\n'
-        "Use integer coordinates on the full-image 0-1000 grid. "
-        "The box must contain all and only the described target instances, satisfy x1 < x2 and y1 < y2, "
-        "and include no explanation, Markdown, or extra objects."
-    )
 
 
 def _unwrap_image_features(result: Any, torch_module: Any):
@@ -80,6 +64,12 @@ class InternVLBackend(GroundingBackend):
 
         self.torch = torch
         self.config = config
+        LOG.info(
+            "loading InternVL model=%s dtype=%s device_map=auto image_cache_size=%d",
+            config.model,
+            config.dtype,
+            config.image_cache_size,
+        )
         self.model = AutoModelForImageTextToText.from_pretrained(config.model, **kwargs).eval()
         self.processor = AutoProcessor.from_pretrained(config.model, trust_remote_code=True)
         self.tokenizer = getattr(self.processor, "tokenizer", self.processor)
@@ -88,6 +78,14 @@ class InternVLBackend(GroundingBackend):
         self._feature_api = hasattr(getattr(self.model, "model", None), "get_image_features")
         self._feature_device = self._find_device(getattr(getattr(self.model, "model", None), "vision_tower", None))
         self._embed_device = self.model.get_input_embeddings().weight.device
+        self._cache_hits = 0
+        self._cache_misses = 0
+        LOG.info(
+            "InternVL loaded: embed_device=%s feature_device=%s feature_api=%s",
+            self._embed_device,
+            self._feature_device,
+            self._feature_api,
+        )
 
     @staticmethod
     def _find_device(module: Any):
@@ -105,8 +103,12 @@ class InternVLBackend(GroundingBackend):
     def _get_cached_image(self, key: str, path: Path) -> dict[str, Any]:
         cached = self._cache.get(key)
         if cached is not None:
+            self._cache_hits += 1
             self._cache.move_to_end(key)
+            LOG.info("image cache hit key=%s size=%d/%d", key, len(self._cache), self._cache_limit)
             return cached
+        self._cache_misses += 1
+        LOG.info("image cache miss key=%s size=%d/%d", key, len(self._cache), self._cache_limit)
         image = self._load_image(path)
         item: dict[str, Any] = {"image": image}
         if self._feature_api:
@@ -127,6 +129,7 @@ class InternVLBackend(GroundingBackend):
                 if self.is_oom(exc):
                     raise
                 # 某些远程 checkpoint 的特征接口签名不同，回退到官方 processor。
+                LOG.warning("get_image_features unavailable; using standard processor path: %s", exc)
                 self._feature_api = False
                 item.pop("features", None)
         if self._cache_limit:
@@ -137,7 +140,7 @@ class InternVLBackend(GroundingBackend):
         return item
 
     def _template_text(self, prompt: str, image: Any) -> str:
-        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": build_prompt(prompt)}]}]
+        messages = [{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
         return self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
     def _cached_row(self, prompt: str, item: dict[str, Any]):
@@ -178,7 +181,7 @@ class InternVLBackend(GroundingBackend):
     def _infer_standard(self, rows: list[tuple[str, dict[str, Any]]]) -> tuple[str, ...]:
         messages = []
         for prompt, item in rows:
-            messages.append([{"role": "user", "content": [{"type": "image", "image": item["image"]}, {"type": "text", "text": build_prompt(prompt)}]}])
+            messages.append([{"role": "user", "content": [{"type": "image", "image": item["image"]}, {"type": "text", "text": prompt}]}])
         inputs = self.processor.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt", padding=True).to(self._embed_device)
         with self.torch.inference_mode():
             generated = self.model.generate(**inputs, max_new_tokens=self.config.max_new_tokens, do_sample=False)
@@ -186,6 +189,8 @@ class InternVLBackend(GroundingBackend):
         return tuple(self.processor.batch_decode(trimmed, skip_special_tokens=False, clean_up_tokenization_spaces=False))
 
     def infer(self, units: list[InferenceUnit]) -> BackendResponse:
+        self._cache_hits = 0
+        self._cache_misses = 0
         rows: list[tuple[str, dict[str, Any]]] = []
         for unit in units:
             item = self._get_cached_image(unit.image_key, unit.image_path)
@@ -196,8 +201,20 @@ class InternVLBackend(GroundingBackend):
             # 不同 InternVL checkpoint 的 chat template 细节可能不同，保留官方标准路径。
             if self.is_oom(exc):
                 raise
+            LOG.warning("cached embedding path failed; retrying standard processor path: %s", exc)
             texts = self._infer_standard(rows)
-        return BackendResponse(tuple(texts), None)
+        LOG.info(
+            "batch complete rows=%d cache_hits=%d cache_misses=%d",
+            len(rows), self._cache_hits, self._cache_misses,
+        )
+        return BackendResponse(
+            tuple(texts),
+            {
+                "cache_hits": self._cache_hits,
+                "cache_misses": self._cache_misses,
+                "feature_api": self._feature_api,
+            },
+        )
 
     @staticmethod
     def is_oom(error: BaseException) -> bool:
